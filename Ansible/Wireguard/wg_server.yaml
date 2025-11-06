@@ -1,0 +1,72 @@
+---
+- name: Setup WireGuard server
+  hosts: vpn_server
+  become: yes
+
+  vars:
+    wg_interface: wg0
+    wg_port: 51820
+    wg_network: 10.100.100.0/24 # Adjust based on your WireGuard subnet
+    wg_server_ip: 10.100.100.1
+
+  tasks:
+    - name: Install WireGuard
+      package:
+        name: wireguard
+        state: present
+
+    - name: Ensure WireGuard dir exists
+      file:
+        path: /etc/wireguard
+        state: directory
+        mode: "0700"
+
+    - name: Generate server private key
+      command: wg genkey
+      register: server_priv
+      args:
+        creates: /etc/wireguard/server_private.key
+
+    - name: Save private key
+      copy:
+        content: "{{ server_priv.stdout }}"
+        dest: /etc/wireguard/server_private.key
+        mode: "0600"
+
+    - name: Generate public key
+      command: bash -c "echo '{{ server_priv.stdout }}' | wg pubkey"
+      register: server_pub
+
+    - name: Save public key
+      copy:
+        content: "{{ server_pub.stdout }}"
+        dest: /etc/wireguard/server.pub
+        mode: "0644"
+
+    - name: Configure base WireGuard interface
+      copy:
+        dest: /etc/wireguard/{{ wg_interface }}.conf
+        mode: "0600"
+        content: |
+          [Interface]
+          Address = {{ wg_server_ip }}/24
+          ListenPort = {{ wg_port }}
+          PrivateKey = {{ server_priv.stdout }}
+
+          # Routing/NAT rules
+          PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+          PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+
+    - name: Enable and start WireGuard
+      systemd:
+        name: wg-quick@{{ wg_interface }}
+        enabled: yes
+        state: started
+
+    - name: Enable IPv4 forwarding
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        state: present
+        sysctl_set: yes
+        reload: yes

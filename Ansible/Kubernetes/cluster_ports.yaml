@@ -1,0 +1,40 @@
+---
+- name: Configure Kubernetes Prerequisites (containerd, Networking, Swap)
+  hosts: cluster_nodes
+  become: yes
+
+  tasks:
+    - name: Open required Kubernetes and Rancher host ports (TCP)
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - 80   # HTTP
+        - 443  # HTTPS
+        - 6443 # K8s API
+        - 9345 # K3s supervisor
+        - 10250 # Kubelet
+        - 10251 # Scheduler
+        - 10252 # Controller-manager
+        - 3260 # iSCSI (Longhorn)
+        - "2379:2380" # etcd cluster comms
+        - "30000:32767" # NodePort range
+        - "9500:9503" # Longhorn UI and services
+        - 7946 # Flannel communication
+      notify: Reload ufw
+
+    - name: Open required Kubernetes ports (UDP)
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: udp
+      loop:
+        - 8472 # Flannel VXLAN (critical for pod networking)
+        - 7946
+      notify: Reload ufw
+
+  handlers:
+    - name: Reload ufw
+      ansible.builtin.command: ufw reload
+      listen: "Reload ufw"

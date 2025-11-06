@@ -1,0 +1,39 @@
+[vpn_server]
+1.2.3.4:123
+
+[entry_point]
+entry-point ansible_host=192.168.10.27 ansible_port=123
+
+[database_servers]
+postgres1 ansible_host=192.168.10.2 ansible_port=123
+postgres2 ansible_host=192.168.10.3 ansible_port=123
+postgres3 ansible_host=192.168.10.4 ansible_port=123
+
+[load_balancers]
+haproxy1 ansible_host=192.168.10.5 ansible_port=123
+haproxy2 ansible_host=192.168.10.6 ansible_port=123
+haproxy3 ansible_host=192.168.10.7 ansible_port=123
+
+[k8s_managers]
+k8s-manager1 ansible_host=192.168.10.9 ansible_port=123
+k8s-manager2 ansible_host=192.168.10.10 ansible_port=123
+k8s-manager3 ansible_host=192.168.10.11 ansible_port=123
+k8s-manager4 ansible_host=192.168.10.12 ansible_port=123
+
+[k8s_workers]
+k8s-worker1 ansible_host=192.168.10.13 ansible_port=123
+k8s-worker2 ansible_host=192.168.10.14 ansible_port=123
+k8s-worker3 ansible_host=192.168.10.15 ansible_port=123
+k8s-worker4 ansible_host=192.168.10.16 ansible_port=123
+k8s-worker5 ansible_host=192.168.10.17 ansible_port=123
+k8s-worker6 ansible_host=192.168.10.18 ansible_port=123
+k8s-worker7 ansible_host=192.168.10.19 ansible_port=123
+k8s-worker8 ansible_host=192.168.10.20 ansible_port=123
+k8s-worker9 ansible_host=192.168.10.21 ansible_port=123
+k8s-worker10 ansible_host=192.168.10.22 ansible_port=123
+
+[k8s_longhorn]
+k8s-longhorn1 ansible_host=192.168.10.23 ansible_port=123
+k8s-longhorn2 ansible_host=192.168.10.24 ansible_port=123
+k8s-longhorn3 ansible_host=192.168.10.25 ansible_port=123
+k8s-longhorn4 ansible_host=192.168.10.26 ansible_port=123

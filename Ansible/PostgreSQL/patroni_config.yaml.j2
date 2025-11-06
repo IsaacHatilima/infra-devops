@@ -1,0 +1,59 @@
+scope: postgresql-cluster
+namespace: /service/
+name: {{ node_name }}
+
+etcd3:
+  hosts: {{ etcd_hosts_string }}
+  protocol: https
+  cacert: /etc/etcd/ssl/ca.crt
+  cert: /etc/etcd/ssl/etcd-postgres{{ etcd_cert_node_id }}.crt
+  key: /etc/etcd/ssl/etcd-postgres{{ etcd_cert_node_id }}.key
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: {{ node_ip }}:8008
+  certfile: /var/lib/postgresql/ssl/server.pem
+  keyfile: /var/lib/postgresql/ssl/server.pem # Patroni usually needs a keyfile defined too
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    postgresql:
+        parameters:
+            ssl: 'on'
+            ssl_cert_file: /var/lib/postgresql/ssl/server.crt
+            ssl_key_file: /var/lib/postgresql/ssl/server.key
+        pg_hba:
+        - hostssl replication replicator 127.0.0.1/32 md5
+        - hostssl replication replicator 192.168.10.2/24 md5
+        - hostssl replication replicator 192.168.10.3/24 md5
+        - hostssl replication replicator 192.168.10.4/24 md5
+        - hostssl all all 127.0.0.1/32 md5
+        - hostssl all all 0.0.0.0/0 md5
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: {{ node_ip }}:5432
+  data_dir: /var/lib/postgresql/data
+  bin_dir: /usr/lib/postgresql/18/bin
+  authentication:
+    superuser:
+      username: postgres
+      password: suiuwe23Dpbh64e12987wR4mj5kQ3456Y0Qf
+    replication:
+      username: replicator
+      password: sad9a23jga8jsuedrwtsskj74567cnV2abjb
+  parameters:
+    max_connections: 100
+    shared_buffers: 256MB
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false

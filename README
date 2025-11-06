@@ -1,0 +1,3 @@
+# Infra - DevOps
+
+The examples will assume the usage of a subnet 192.168.10.0/24 and VPN subnet of 10.100.100.0/24

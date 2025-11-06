@@ -1,0 +1,74 @@
+---
+- name: Configure and Start HAProxy for Patroni Cluster
+  hosts: load_balancers
+  become: yes
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # 1. INSTALLATION
+    # -------------------------------------------------------------------------
+    - name: Install HAProxy
+      ansible.builtin.apt:
+        name: haproxy
+        state: present
+        update_cache: yes
+
+    # -------------------------------------------------------------------------
+    # 2. FIREWALL (CRITICAL: Allow client connections to HAProxy)
+    # -------------------------------------------------------------------------
+    - name: Allow incoming connections on the PostgreSQL default port (5432)
+      community.general.ufw:
+        rule: allow
+        port: 5432
+        proto: tcp
+        comment: "HAProxy to PostgreSQL client port"
+      when: ansible_service_mgr == 'systemd' # Only run on Linux systems using systemd/ufw
+      notify: Reload ufw
+
+    - name: Enable IP non-local bind for Keepalived/HAProxy VIP
+      ansible.builtin.sysctl:
+        name: net.ipv4.ip_nonlocal_bind
+        value: '1'
+        state: present
+        reload: yes
+
+    - name: Allow incoming connections on the Kubernetes API port (6443)
+      community.general.ufw:
+        rule: allow
+        port: 6443
+        proto: tcp
+        comment: "HAProxy to Kubernetes API client port"
+      when: ansible_service_mgr == 'systemd'
+      notify: Reload ufw
+
+    # -------------------------------------------------------------------------
+    # 3. CONFIGURATION
+    # -------------------------------------------------------------------------
+    - name: Generate dynamic haproxy.cfg using template
+      ansible.builtin.template:
+        src: haproxy.cfg.j2 # Create this template file (see below)
+        dest: /etc/haproxy/haproxy.cfg
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Restart HAProxy
+
+    # -------------------------------------------------------------------------
+    # 4. SERVICE MANAGEMENT
+    # -------------------------------------------------------------------------
+    - name: Enable and start HAProxy service
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart HAProxy
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: restarted
+      listen: "Restart HAProxy"
+    
+    - name: Reload ufw
+      ansible.builtin.command: ufw reload
+      listen: "Reload ufw"

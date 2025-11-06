@@ -1,0 +1,10 @@
+---
+
+- hosts: all
+  become: true
+  tasks:
+    - name: Update all packages to their latest version
+      tags: always
+      apt:
+        name: "*"
+        state: latest

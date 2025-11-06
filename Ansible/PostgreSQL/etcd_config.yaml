@@ -1,0 +1,186 @@
+---
+- name: Configure and Start etcd Cluster Service
+  hosts: database_servers
+  become: yes
+  vars:
+    # --- Cluster Variables ---
+    etcd_cluster_members:
+      - name: postgres1
+        ip: 192.168.10.2
+        cert_node_id: 1
+      - name: postgres2
+        ip: 192.168.10.3
+        cert_node_id: 2
+      - name: postgres3
+        ip: 192.168.10.4
+        cert_node_id: 3
+
+    # --- Derived Variables ---
+    current_node: "{{ etcd_cluster_members | selectattr('ip', 'equalto', ansible_eth0.ipv4.address) | first }}"
+    etcd_name: "{{ current_node.name }}"
+    etcd_ip: "{{ current_node.ip }}"
+    etcd_cert_node_id: "{{ current_node.cert_node_id }}"
+    etcd_initial_cluster_string: |
+      {%- set cluster_list = [] -%}
+      {%- for member in etcd_cluster_members -%}
+      {%- set _ = cluster_list.append(member.name ~ '=https://' ~ member.ip ~ ':2380') -%}
+      {%- endfor -%}
+      {{ cluster_list | join(',') }}
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # 0. PREREQUISITES AND FIREWALL (CRITICAL FIXES) 🛑
+    # -------------------------------------------------------------------------
+    - name: Clean up existing etcd data directory (CRITICAL for first reliable start)
+      ansible.builtin.file:
+        path: /var/lib/etcd/member
+        state: absent
+
+    - name: Allow etcd peer communication (2380/tcp) from the cluster subnet
+      community.general.ufw:
+        rule: allow
+        port: 2380
+        proto: tcp
+
+    - name: Allow etcd client communication (2379/tcp) from the cluster subnet
+      community.general.ufw:
+        rule: allow
+        port: 2379
+        proto: tcp
+      notify: Reload ufw
+
+    # -------------------------------------------------------------------------
+    # 1. SETUP CERTIFICATES AND PERMISSIONS (Restored)
+    # -------------------------------------------------------------------------
+    - name: Ensure /etc/etcd/ssl directory exists
+      ansible.builtin.file:
+        path: /etc/etcd/ssl
+        state: directory
+        owner: etcd
+        group: etcd
+        mode: "0700"
+    
+    - name: Move and set ownership/permissions for CA certificate
+      ansible.builtin.copy:
+        src: /tmp/ca.crt
+        dest: /etc/etcd/ssl/ca.crt
+        owner: etcd
+        group: etcd
+        mode: '0644'
+        remote_src: yes
+
+    - name: Move and set ownership/permissions for Node certificate (crt)
+      ansible.builtin.copy:
+        src: "/tmp/etcd-postgres{{ etcd_cert_node_id }}.crt"
+        dest: "/etc/etcd/ssl/etcd-postgres{{ etcd_cert_node_id }}.crt"
+        owner: etcd
+        group: etcd
+        mode: '0644'
+        remote_src: yes
+
+    - name: Move and set ownership/permissions for Node key (key)
+      ansible.builtin.copy:
+        src: "/tmp/etcd-postgres{{ etcd_cert_node_id }}.key"
+        dest: "/etc/etcd/ssl/etcd-postgres{{ etcd_cert_node_id }}.key"
+        owner: etcd
+        group: etcd
+        mode: '0600'
+        remote_src: yes
+
+    - name: Ensure base /etc/etcd is owned by etcd
+      ansible.builtin.file:
+        path: /etc/etcd
+        owner: etcd
+        group: etcd
+        recurse: yes
+        state: directory
+
+    # -------------------------------------------------------------------------
+    # 2. CONFIGURE ETCD ENVIRONMENT FILE (/etc/etcd/etcd.env)
+    # -------------------------------------------------------------------------
+    - name: Generate the etcd environment file dynamically (Must set STATE="new")
+      ansible.builtin.template:
+        src: etcd.env.j2
+        dest: /etc/etcd/etcd.env
+        owner: etcd
+        group: etcd
+        mode: "0644"
+      notify: Reload systemd and restart etcd
+
+    # -------------------------------------------------------------------------
+    # 3. CONFIGURE ETCD SYSTEMD SERVICE FILE (Copied as-is)
+    # -------------------------------------------------------------------------
+    - name: Copy the etcd systemd service file
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=etcd key-value store
+          Documentation=https://github.com/etcd-io/etcd
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=notify
+          WorkingDirectory=/var/lib/etcd
+          EnvironmentFile=/etc/etcd/etcd.env
+          ExecStart=/usr/local/bin/etcd
+          Restart=always
+          RestartSec=10s
+          LimitNOFILE=40000
+          User=etcd
+          Group=etcd
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/etcd.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd and restart etcd
+
+    # -------------------------------------------------------------------------
+    # 4. INITIALIZE DATA DIRECTORY
+    # -------------------------------------------------------------------------
+    - name: Ensure /var/lib/etcd data directory exists and is owned by etcd
+      ansible.builtin.file:
+        path: /var/lib/etcd
+        state: directory
+        owner: etcd
+        group: etcd
+        mode: "0700"
+
+    # -------------------------------------------------------------------------
+    # 5. INITIAL SERVICE START SEQUENCE
+    # -------------------------------------------------------------------------
+    - name: Reload systemd daemon
+      ansible.builtin.systemd_service:
+        daemon_reload: yes
+
+    - name: Enable etcd service
+      ansible.builtin.systemd_service:
+        name: etcd
+        enabled: yes
+
+    - name: Start etcd service for the first time
+      ansible.builtin.systemd_service:
+        name: etcd
+        state: started
+
+    - name: Verify etcd service is running (Status Check)
+      ansible.builtin.systemd_service:
+        name: etcd
+        state: started
+
+  handlers:
+    # -------------------------------------------------------------------------
+    # Handlers (Must be present for 'notify' to work)
+    # -------------------------------------------------------------------------
+    - name: Reload ufw
+      ansible.builtin.command: ufw reload
+      listen: "Reload ufw"
+
+    - name: Reload systemd and restart etcd
+      ansible.builtin.systemd_service:
+        daemon_reload: yes
+        name: etcd
+        state: restarted

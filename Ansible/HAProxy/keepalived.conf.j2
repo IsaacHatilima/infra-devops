@@ -1,0 +1,43 @@
+global_defs {
+    # Keepalived security user for health check scripts
+    enable_script_security
+    script_user keepalived_script
+    router_id {{ inventory_hostname }}
+}
+
+vrrp_script check_haproxy {
+    script "/etc/keepalived/check_haproxy.sh"
+    interval 2
+    fall 3
+    rise 2
+    timeout 1
+}
+
+vrrp_instance VI_{{ vrrp_instance_id }} {
+    state {{ vrrp_state }} 
+    interface eth0
+    priority {{ vrrp_priority }}
+    
+    virtual_router_id {{ vrrp_instance_id }}
+    advert_int 1
+
+    unicast_src_ip {{ ansible_host }}
+    unicast_peer {
+        {% for peer_ip in vrrp_peers %}
+        {{ peer_ip }}
+        {% endfor %}
+    }
+    
+    authentication {
+        auth_type PASS
+        auth_pass {{ auth_password }}
+    }
+    
+    virtual_ipaddress {
+        192.168.10.8/24 dev eth0
+    }
+    
+    track_script {
+        check_haproxy
+    }
+}

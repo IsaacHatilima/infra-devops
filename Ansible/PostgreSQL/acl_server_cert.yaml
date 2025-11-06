@@ -1,0 +1,87 @@
+---
+- name: Configure PostgreSQL Server SSL and ACLs for etcd
+  hosts: database_servers
+  become: yes
+  vars:
+    # --- Cluster Variables (Same as etcd playbook for dynamic certificate naming) ---
+    etcd_cluster_members:
+      - name: postgres1
+        ip: 192.168.10.2
+        cert_node_id: 1
+      - name: postgres2
+        ip: 192.168.10.3
+        cert_node_id: 2
+      - name: postgres3
+        ip: 192.168.10.4
+        cert_node_id: 3
+
+    # --- Derived Variable ---
+    current_node: "{{ etcd_cluster_members | selectattr('ip', 'equalto', ansible_eth0.ipv4.address) | first }}"
+    etcd_cert_node_id: "{{ current_node.cert_node_id }}"
+
+    # Paths
+    pg_data_dir: "/var/lib/postgresql/data"
+    pg_ssl_dir: "/var/lib/postgresql/ssl"
+    etcd_ssl_dir: "/etc/etcd/ssl"
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # 1. SETUP POSTGRESQL DIRECTORIES
+    # -------------------------------------------------------------------------
+    - name: Ensure PostgreSQL data and SSL directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0700"
+      loop:
+        - "{{ pg_data_dir }}"
+        - "{{ pg_ssl_dir }}"
+
+    # -------------------------------------------------------------------------
+    # 2. CONFIGURE POSTGRESQL SERVER CERTIFICATES
+    # -------------------------------------------------------------------------
+    - name: Move and set ownership/permissions for PostgreSQL server certificate files
+      ansible.builtin.copy:
+        src: "/tmp/{{ item.name }}"
+        dest: "{{ pg_ssl_dir }}/{{ item.name }}"
+        owner: postgres
+        group: postgres
+        mode: "{{ item.mode }}"
+        remote_src: yes
+      loop:
+        - { name: "server.crt", mode: "0644" }
+        - { name: "server.key", mode: "0600" } # Key must be 600
+        - { name: "server.req", mode: "0600" }
+
+    # -------------------------------------------------------------------------
+    # 3. INSTALL ACL UTILITIES
+    # -------------------------------------------------------------------------
+    - name: Install ACL utility
+      ansible.builtin.apt:
+        name: acl
+        state: present
+        update_cache: yes
+
+    # -------------------------------------------------------------------------
+    # 4. SET ACLs FOR POSTGRES USER ON ETCD FILES
+    # -------------------------------------------------------------------------
+    - name: Grant postgres user read access to etcd CA, certificate, and key
+      ansible.builtin.command:
+        cmd: "setfacl -m u:postgres:r {{ etcd_ssl_dir }}/{{ item.file }}"
+      loop:
+        - { file: "ca.crt" }
+        - { file: "etcd-postgres{{ etcd_cert_node_id }}.crt" }
+        - { file: "etcd-postgres{{ etcd_cert_node_id }}.key" }
+
+    # -------------------------------------------------------------------------
+    # 5. FINAL OWNERSHIP CHECK (Already handled, but added for completeness)
+    # -------------------------------------------------------------------------
+    - name: Ensure /var/lib/postgresql is recursively owned by postgres
+      ansible.builtin.file:
+        path: /var/lib/postgresql
+        owner: postgres
+        group: postgres
+        recurse: yes
+        state: directory

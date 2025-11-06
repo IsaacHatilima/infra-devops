@@ -1,0 +1,109 @@
+---
+- name: Configure WireGuard clients and register peers on server
+  hosts: wg_clients
+  become: yes
+
+  vars:
+    wg_interface: wg0
+    wg_server_public_key: "SOMEVERYLONGPUBLICKEYSTRINGHERE"
+    wg_server_ip: 192.168.123.1 # Replace with actual server IP
+    wg_server_ssh_port: 12345 # Replace with actual SSH port if not default
+    wg_server_port: 51820
+    wg_network_prefix: "10.100.100" # Adjust based on your WireGuard subnet
+    wg_ip_start: 2 # Starting IP suffix for clients
+
+  tasks:
+    - name: Ensure WireGuard tools are installed on client
+      apt:
+        name: wireguard
+        state: present
+        update_cache: yes
+
+    - name: Check if client WireGuard key already exists
+      stat:
+        path: /etc/wireguard/private_server.key
+      register: client_key_file
+
+    - name: Generate client private key
+      command: wg genkey
+      register: client_private
+      args:
+        creates: /etc/wireguard/private_server.key
+      when: not client_key_file.stat.exists
+
+    - name: Save client private key
+      copy:
+        content: "{{ client_private.stdout }}"
+        dest: /etc/wireguard/private_server.key
+        mode: "0600"
+      when: not client_key_file.stat.exists
+
+    - name: Generate client public key
+      command: bash -c "echo '{{ client_private.stdout }}' | wg pubkey"
+      register: client_public
+      when: not client_key_file.stat.exists
+
+    - name: Assign client VPN IP
+      set_fact:
+        wg_client_ip: "{{ wg_network_prefix }}.{{ wg_ip_start + play_hosts.index(inventory_hostname) }}"
+
+    - name: Configure WireGuard client
+      copy:
+        dest: /etc/wireguard/{{ wg_interface }}.conf
+        mode: "0600"
+        content: |
+          [Interface]
+          Address = {{ wg_client_ip }}/32
+          PrivateKey = {{ client_private.stdout }}
+
+          [Peer]
+          PublicKey = {{ wg_server_public_key }}
+          Endpoint = {{ wg_server_ip }}:{{ wg_server_port }}
+          AllowedIPs = 10.100.100.0/24
+          PersistentKeepalive = 25
+      when: not client_key_file.stat.exists
+
+    - name: Enable and start WireGuard on client (Alternative Async Fix)
+      systemd:
+        name: wg-quick@{{ wg_interface }}
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      when: not client_key_file.stat.exists
+      async: 10 # Run for up to 10 seconds in the background
+      poll: 0 # Do not wait for the task to finish (asynchronous)
+
+    - name: Add client peer to server
+      block:
+        - name: Create peer entry content
+          set_fact:
+            peer_content: |
+              # Host: {{ inventory_hostname }}
+              [Peer]
+              PublicKey = {{ client_public.stdout }}
+              AllowedIPs = {{ wg_client_ip }}/32
+        - name: Include peer in server wg0.conf if not already present
+          lineinfile:
+            path: /etc/wireguard/wg0.conf
+            # Check if the public key is already present to prevent duplicates
+            regexp: "PublicKey = {{ client_public.stdout | regex_escape() }}"
+            line: "{{ peer_content }}"
+            insertafter: EOF
+            create: yes
+          delegate_to: "{{ wg_server_ip }}"
+          vars:
+            ansible_port: "{{ wg_server_ssh_port }}"
+          register: wg_conf_result
+
+        - name: Reload WireGuard on server using systemd (Async Fix)
+          systemd:
+            name: wg-quick@{{ wg_interface }}
+            state: restarted
+            daemon_reload: yes # Recommended to ensure systemd sees the latest config
+          delegate_to: "{{ wg_server_ip }}"
+          vars:
+            ansible_port: "{{ wg_server_ssh_port }}"
+          when: wg_conf_result.changed
+          async: 10 # Allow the task to run up to 10 seconds in the background
+          poll: 0
+      when: not client_key_file.stat.exists

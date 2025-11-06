@@ -1,0 +1,76 @@
+---
+- name: Install and Setup etcd v3.5.24
+  hosts: database_servers
+  become: yes
+  vars:
+    etcd_version: "v3.5.24"
+    etcd_checksum: "sha256:042497e2ddcee06f22e5d486d81f58affa26b53ee423e2a6aaca3d3ea98c8191"
+    etcd_archive_name: "etcd-{{ etcd_version }}-linux-amd64.tar.gz"
+    etcd_download_url: "https://github.com/etcd-io/etcd/releases/download/{{ etcd_version }}/{{ etcd_archive_name }}"
+    etcd_temp_dir: "/tmp/etcd_install"
+    etcd_bin_dir: "/usr/local/bin"
+
+  tasks:
+    - name: Ensure necessary utilities (wget, curl) are installed and apt cache is updated
+      ansible.builtin.apt:
+        name:
+          - wget
+          - curl
+        state: present
+        update_cache: yes
+
+    - name: Create temporary directory for downloads
+      ansible.builtin.file:
+        path: "{{ etcd_temp_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Download the etcd archive
+      ansible.builtin.get_url:
+        url: "{{ etcd_download_url }}"
+        dest: "{{ etcd_temp_dir }}/{{ etcd_archive_name }}"
+        checksum: "{{ etcd_checksum }}"
+        mode: "0644"
+
+    - name: Unarchive etcd
+      ansible.builtin.unarchive:
+        src: "{{ etcd_temp_dir }}/{{ etcd_archive_name }}"
+        dest: "{{ etcd_temp_dir }}"
+        remote_src: yes
+        extra_opts:
+          - --strip-components=1
+
+    - name: Copy etcd and etcdctl binaries to {{ etcd_bin_dir }}
+      ansible.builtin.copy:
+        src: "{{ etcd_temp_dir }}/{{ item }}"
+        dest: "{{ etcd_bin_dir }}/{{ item }}"
+        mode: "0755"
+        remote_src: yes
+      loop:
+        - etcd
+        - etcdctl
+
+    - name: Create the system user 'etcd'
+      ansible.builtin.user:
+        name: etcd
+        comment: etcd System User
+        system: yes
+        home: /var/lib/etcd
+        shell: /bin/false
+        create_home: yes
+
+    - name: Create configuration directories (/etc/etcd and /etc/etcd/ssl)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: etcd
+        group: etcd
+        mode: "0700"
+      loop:
+        - /etc/etcd
+        - /etc/etcd/ssl
+
+    - name: Clean up temporary installation directory
+      ansible.builtin.file:
+        path: "{{ etcd_temp_dir }}"
+        state: absent

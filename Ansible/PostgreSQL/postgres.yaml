@@ -1,0 +1,49 @@
+---
+- name: Install PostgreSQL from official PGDG repository on Debian/Ubuntu
+  hosts: database_servers
+  become: yes
+
+  tasks:
+    # Task 1: Install prerequisites and the tool to add the PGDG repository
+    - name: Ensure 'software-properties-common' and 'postgresql-common' packages are installed
+      ansible.builtin.apt:
+        name:
+          - software-properties-common
+          - postgresql-common
+        state: present
+        update_cache: yes
+
+    # Task 2: Add the official PostgreSQL repository (PGDG)
+    - name: Add PostgreSQL PGDG APT repository
+      ansible.builtin.shell:
+        cmd: /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+      args:
+        creates: /etc/apt/sources.list.d/pgdg.list
+      notify: Update apt cache
+
+    # Task 3: Install the latest PostgreSQL server and client components
+    - name: Install PostgreSQL server and client
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+        state: present
+
+    # Task 4: Stop the PostgreSQL service (as requested)
+    - name: Stop the PostgreSQL service
+      ansible.builtin.service:
+        name: postgresql
+        state: stopped
+
+    # Task 5: Disable the PostgreSQL service (as requested)
+    - name: Disable PostgreSQL from starting on boot
+      ansible.builtin.service:
+        name: postgresql
+        enabled: no
+
+  handlers:
+    # Handler to update the APT cache after the new repository is added
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+      listen: "Update apt cache"

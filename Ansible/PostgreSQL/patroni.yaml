@@ -1,0 +1,134 @@
+---
+- name: Configure and Start Patroni Service
+  hosts: database_servers
+  become: yes
+  vars:
+    # --- Cluster Variables (Same as etcd/ACL playbooks) ---
+    etcd_cluster_members:
+      - name: postgres1
+        ip: 192.168.10.2
+        cert_node_id: 1
+      - name: postgres2
+        ip: 192.168.10.3
+        cert_node_id: 2
+      - name: postgres3
+        ip: 192.168.10.4
+        cert_node_id: 3
+
+    # --- Derived Variables ---
+    current_node: "{{ etcd_cluster_members | selectattr('ip', 'equalto', ansible_eth0.ipv4.address) | first }}"
+    node_name: "{{ current_node.name }}" # e.g., postgres1
+    node_ip: "{{ current_node.ip }}"
+    etcd_cert_node_id: "{{ current_node.cert_node_id }}" # e.g., 1
+
+    etcd_hosts_string: "{{ etcd_cluster_members | map(attribute='ip') | map('regex_replace', '^(.*)$', '\\1:2379') | join(',') }}"
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # 1. INSTALL PATRONI AND CREATE CONFIG DIR
+    # -------------------------------------------------------------------------
+    - name: Install Patroni via apt
+      ansible.builtin.apt:
+        name: patroni
+        state: present
+        update_cache: yes
+
+    - name: Ensure /etc/patroni directory exists
+      ansible.builtin.file:
+        path: /etc/patroni
+        state: directory
+        mode: "0755"
+
+    - name: Ensure /etc/etcd directories allow 'other' to traverse (execute/search)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: "a+x"
+        owner: etcd
+        group: etcd
+      loop:
+        - /etc/etcd
+        - /etc/etcd/ssl
+
+    # -------------------------------------------------------------------------
+    # 2. CREATE POSTGRES SERVER.PEM FILE
+    # -------------------------------------------------------------------------
+    - name: Combine server.crt and server.key into server.pem
+      ansible.builtin.shell:
+        cmd: "cat /var/lib/postgresql/ssl/server.crt /var/lib/postgresql/ssl/server.key > /var/lib/postgresql/ssl/server.pem"
+      args:
+        creates: /var/lib/postgresql/ssl/server.pem
+
+    - name: Set ownership and permissions for server.pem
+      ansible.builtin.file:
+        path: /var/lib/postgresql/ssl/server.pem
+        owner: postgres
+        group: postgres
+        mode: "0600"
+
+    # -------------------------------------------------------------------------
+    # 3. CONFIGURE PATRONI CONFIG.YML
+    # -------------------------------------------------------------------------
+    - name: Generate patroni config.yml dynamically
+      ansible.builtin.template:
+        src: patroni_config.yml.j2
+        dest: /etc/patroni/config.yml
+        mode: "0644"
+      register: patroni_config_updated
+
+    # -------------------------------------------------------------------------
+    # 4. START AND ENABLE PATRONI
+    # -------------------------------------------------------------------------
+    - name: Enable and start Patroni service
+      ansible.builtin.systemd_service:
+        name: patroni
+        state: restarted
+        enabled: yes
+
+    # -------------------------------------------------------------------------
+    # 5. ETCD CLUSTER STATE UPDATE (Requested Post-Patroni Start)
+    # -------------------------------------------------------------------------
+    - name: Set ETCD_INITIAL_CLUSTER_STATE to 'existing' for future restarts
+      ansible.builtin.lineinfile:
+        path: /etc/etcd/etcd.env
+        regexp: "^ETCD_INITIAL_CLUSTER_STATE="
+        line: 'ETCD_INITIAL_CLUSTER_STATE="existing"'
+        owner: etcd
+        group: etcd
+        mode: "0644"
+      register: env_updated
+
+    - name: Restart etcd service to load 'existing' state
+      ansible.builtin.systemd_service:
+        name: etcd
+        state: restarted
+      when: env_updated.changed
+
+    # -------------------------------------------------------------------------
+    # 5. ETCD CLUSTER STATE UPDATE (Requested Post-Patroni Start)
+    # -------------------------------------------------------------------------
+    - name: Allow etcd client communication (5432/tcp) from the cluster subnet
+      community.general.ufw:
+        rule: allow
+        port: 5432
+        proto: tcp
+      notify: Reload ufw
+
+    # -------------------------------------------------------------------------
+    # 6. FINAL SERVICE RESTART
+    # -------------------------------------------------------------------------
+
+  handlers:
+    - name: Reload systemd daemon only
+      ansible.builtin.systemd_service:
+        daemon_reload: yes
+      listen: "Reload systemd daemon only"
+
+    - name: Reload systemd and restart etcd
+      ansible.builtin.systemd_service:
+        daemon_reload: yes
+        name: etcd
+        state: restarted
+
+    - name: Reload ufw
+      ansible.builtin.command: ufw reload
+      listen: "Reload ufw"     

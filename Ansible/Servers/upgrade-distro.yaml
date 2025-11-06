@@ -1,0 +1,9 @@
+---
+
+- hosts: all
+  become: true
+  tasks:
+    - name: Upgrade OS (apt-get dist-upgrade)
+      tags: always
+      apt:
+        upgrade: dist

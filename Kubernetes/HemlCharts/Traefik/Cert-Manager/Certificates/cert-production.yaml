@@ -1,0 +1,15 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: domain # change to your domain
+  namespace: traefik # add to traefik namespace so it can use it (you DO NOT need it in each app namespace!!!)
+spec:
+  secretName: some-tls # change to your secretname to match the one in ingress.yaml
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  commonName: "*.domain.com" # change to your domain
+  dnsNames:
+  - "*.domain.com" # change to your domain
+  - domain.com # change to your domain

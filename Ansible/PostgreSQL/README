@@ -1,0 +1,9 @@
+# Postgres 3 Server HA Cluster
+
+## Oder of Playbook Execution
+
+- postgres.yaml
+- etcd.yaml
+- etcd_config.yaml
+- acl_server_cert.yaml
+- patroni.yaml

@@ -1,0 +1,98 @@
+---
+- name: 1. Deploy Keepalived Dynamic Routing Automation
+  hosts: load_balancers
+  become: yes
+  vars:
+    # --- Keepalived Configuration Variables ---
+    vrrp_interface: "eth0"
+    virtual_ip: "192.168.10.8/24"
+    auth_password: "tDHjh7by"
+    vrrp_instance_id: 51
+    check_port: 5432
+
+    # --- Dynamic Variables from Inventory ---
+    vrrp_priority: "{{ 100 if inventory_hostname == 'haproxy1' else (90 if inventory_hostname == 'haproxy2' else 80) }}"
+    vrrp_state: "{{ 'MASTER' if vrrp_priority == 100 else 'BACKUP' }}"
+    vrrp_peers: "{{ haproxy_peers_map | map(attribute='ip') | reject('equalto', ansible_host) | list }}"
+    haproxy_peers_map:
+      - name: haproxy1
+        ip: 192.168.10.5
+      - name: haproxy2
+        ip: 192.168.10.6
+      - name: haproxy3
+        ip: 192.168.10.7
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # 1. INSTALLATION AND USER SETUP
+    # -------------------------------------------------------------------------
+    - name: Install Keepalived and essential network utilities (ss is part of iproute2)
+      ansible.builtin.apt:
+        name:
+          - keepalived
+          - iproute2
+          - openssh-client # Needed for the notification script's SSH connection
+        state: present
+        update_cache: yes
+
+    - name: Create keepalived_script user
+      ansible.builtin.user:
+        name: keepalived_script
+        state: present
+        shell: /bin/false
+        system: yes
+        create_home: no
+
+    # -------------------------------------------------------------------------
+    # 2. HEALTH CHECK SCRIPT
+    # -------------------------------------------------------------------------
+    - name: Deploy HAProxy health check script (/etc/keepalived/check_haproxy.sh)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          # Define the port to check (HAProxy frontend port)
+          PORT={{ check_port }}
+
+          # Check if HAProxy is running
+          if ! pidof haproxy > /dev/null; then
+              echo "HAProxy is not running"
+              exit 1
+          fi
+
+          # Check if HAProxy is listening on the expected port (ss is more reliable than netstat/grep)
+          if ! ss -ltn | grep -q ":${PORT}"; then
+              echo "HAProxy is not listening on port ${PORT}"
+              exit 2
+          fi
+
+          # All checks passed
+          exit 0
+        dest: /etc/keepalived/check_haproxy.sh
+        mode: "0700"
+        owner: keepalived_script
+        group: keepalived_script
+
+    # -------------------------------------------------------------------------
+    # 3. KEEPALIVED.CONF CONFIGURATION
+    # -------------------------------------------------------------------------
+    - name: Generate keepalived.conf dynamically with UNICAST PEERS and NOTIFY
+      ansible.builtin.template:
+        src: keepalived.conf.j2
+        dest: /etc/keepalived/keepalived.conf
+        mode: "0644"
+      notify: Restart keepalived
+
+    # -------------------------------------------------------------------------
+    # 4. SERVICE MANAGEMENT
+    # -------------------------------------------------------------------------
+    - name: Enable and ensure Keepalived service is running
+      ansible.builtin.systemd_service:
+        name: keepalived
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart keepalived
+      ansible.builtin.systemd_service:
+        name: keepalived
+        state: restarted
