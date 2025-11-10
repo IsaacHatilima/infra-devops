@@ -1,0 +1,118 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  storageClassName: longhorn
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      nodeSelector:
+        worker: "true"
+      securityContext:
+        fsGroup: 472
+        runAsUser: 472
+        runAsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http-grafana
+              protocol: TCP
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-user
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-password
+            - name: GF_DATABASE_TYPE
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-db
+                  key: GF_DATABASE_TYPE
+            - name: GF_DATABASE_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-db
+                  key: GF_DATABASE_HOST
+            - name: GF_DATABASE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-db
+                  key: GF_DATABASE_NAME
+            - name: GF_DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-db
+                  key: GF_DATABASE_USER
+            - name: GF_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-db
+                  key: GF_DATABASE_PASSWORD
+            - name: GF_DATABASE_SSL_MODE
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-db
+                  key: GF_DATABASE_SSL_MODE
+            - name: GF_SESSION_PROVIDER
+              value: redis
+            - name: GF_SESSION_PROVIDER_CONFIG
+              value: addr=redis-grafana:6379,pool_size=10,prefix=grafana_session_
+          volumeMounts:
+            - name: grafana-storage
+              mountPath: /var/lib/grafana
+      restartPolicy: Always
+      volumes:
+        - name: grafana-storage
+          persistentVolumeClaim:
+            claimName: grafana-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  type: LoadBalancer
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+  selector:
+    app: grafana
+  externalTrafficPolicy: Cluster
+  loadBalancerIP: 192.168.10.204

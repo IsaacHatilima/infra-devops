@@ -11,23 +11,7 @@ backend postgres_backend
     timeout connect 5s
     timeout client 30s
     timeout server 30s
+
     server postgres1 192.168.10.2:5432 port 8008 check check-ssl verify none
     server postgres2 192.168.10.3:5432 port 8008 check check-ssl verify none
     server postgres3 192.168.10.4:5432 port 8008 check check-ssl verify none
-
-frontend kubernetes_api_frontend
-    bind 192.168.10.8:6443 
-    mode tcp
-    default_backend kubernetes_api_backend
-
-backend kubernetes_api_backend
-    mode tcp
-    option tcplog
-    option tcp-check
-    balance roundrobin
-    timeout connect 5s
-    timeout client 30s
-    timeout server 30s
-    server manager1 192.168.10.9:6443 check fall 3 rise 2
-    server manager2 192.168.10.10:6443 check fall 3 rise 2
-    server manager3 192.168.10.11:6443 check fall 3 rise 2

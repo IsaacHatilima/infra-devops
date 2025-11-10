@@ -3,14 +3,8 @@
   hosts: wg_clients
   become: yes
 
-  vars:
-    wg_interface: wg0
-    wg_server_public_key: "SOMEVERYLONGPUBLICKEYSTRINGHERE"
-    wg_server_ip: 192.168.123.1 # Replace with actual server IP
-    wg_server_ssh_port: 12345 # Replace with actual SSH port if not default
-    wg_server_port: 51820
-    wg_network_prefix: "10.100.100" # Adjust based on your WireGuard subnet
-    wg_ip_start: 2 # Starting IP suffix for clients
+  vars_files:
+    - ./wireguard.env.yaml
 
   tasks:
     - name: Ensure WireGuard tools are installed on client
